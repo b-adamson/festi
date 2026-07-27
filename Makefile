@@ -1,5 +1,5 @@
 # Compiler and tools
-CXX = g++ -g 
+CXX = C:/msys64/mingw64/bin/g++.exe -g
 CFLAGS := -std=c++17 -Wall -Wextra
 GLSLC = C:/VulkanSDK/1.3.290.0/Bin/glslc.exe
 
@@ -21,7 +21,7 @@ LIB_DIRS =  -L$(VULKAN_SDK)/Lib \
             -L$(LIB_PATH)/glfw-3.4.bin.WIN64/lib-mingw-w64 \
 			-LC:/msys64/mingw64/lib
 
-LIBS = -lvulkan-1 -lglfw3 -luser32 -lgdi32 -lshell32 -lpython3.12.dll
+LIBS = -lvulkan-1 -lglfw3 -luser32 -lgdi32 -lshell32 -lpython3.12.dll -lwinhttp
 DEFINES = -DDEBUG
 
 # Directories
@@ -37,10 +37,18 @@ FRAG_FILES = $(wildcard $(SHADER_DIR)/*.frag)
 SPV_FILES = $(VERT_FILES:$(SHADER_DIR)/%.vert=$(OBJ_DIR)/%.vert.spv) $(FRAG_FILES:$(SHADER_DIR)/%.frag=$(OBJ_DIR)/%.frag.spv)
 
 # Targets
-.PHONY: all clean shaders python_module
+.PHONY: all build run clean shaders python_module
 
 # Default target
 all: shaders festi.exe python_module
+
+# Alias for 'all'
+build: all
+
+# Build (if needed) then run, with the mingw64 bin dir on PATH so
+# festi.exe can find libpython3.12.dll at runtime
+run: festi.exe
+	PATH="/c/msys64/mingw64/bin:$$PATH" ./festi.exe
 
 # Ensure OBJ_DIR exists
 $(OBJ_DIR):
@@ -70,7 +78,7 @@ festi.exe: $(OBJ_FILES) $(SPV_FILES)
 # Build the Python extension module (.pyd file)
 python_module: $(OBJ_FILES) | $(OBJ_DIR)
 	@echo "Creating Python extension module..."
-	$(CXX) -shared -o $(VENV_PYTHON_DIR)/festi.pyd $(OBJ_FILES) $(LIB_DIRS) $(LIBS) || (echo "Failed to build Python extension" && exit 1)
+	$(CXX) -fno-use-linker-plugin -shared -o $(VENV_PYTHON_DIR)/festi.pyd $(OBJ_FILES) $(LIB_DIRS) $(LIBS) || (echo "Failed to build Python extension" && exit 1)
 
 # Clean target
 clean:

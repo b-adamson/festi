@@ -26,6 +26,7 @@ Inspired by, and built while following along with, [Brendan Galea's Vulkan tutor
   pieces out
 - OBJ/MTL model loading (tinyobjloader) and PNG textures (stb)
 - Python scene scripting through a `festi` module built with pybind11, with custom-made type casters between NumPy arrays and GLM vector/matrix types
+- `fpga/` -- experimental hardware accelerators for pieces of the CPU-side geometry pipeline (starting with the procedural instancing math), implemented in SystemVerilog, verified in simulation, and run live on a Kria K26 SOM. See [`fpga/point_sampler/README.md`](fpga/point_sampler/README.md).
 
 ## Example
 
@@ -46,6 +47,8 @@ src/
   shaders/                 GLSL shaders (main, point light, shadow)
   scripts/                 example Python scenes
 models/, materials/        OBJ/MTL models and material assets used by the example scripts
+fpga/                      SystemVerilog hardware accelerators for parts of the CPU geometry pipeline,
+                             verified in simulation and run live on real hardware (see fpga/point_sampler/README.md)
 ```
 
 ## Building (Windows)

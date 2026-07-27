@@ -3,3 +3,40 @@
 /.venv/
 /src/scripts/__pycache__/
 *.exe
+
+# Vivado session logs/journals -- written to whatever directory vivado
+# was launched from (GUI or CLI), not just fpga/, so ignore repo-wide.
+# Broad *vivado* patterns rather than a fixed "vivado.log" name, since
+# custom -log/-journal names (e.g. dashboard_vivado.log) get their own
+# PID-suffixed *.backup.log/.jou copies too whenever overwritten.
+*vivado*.log
+*vivado*.jou
+webtalk*.log
+webtalk*.jou
+.Xil/
+
+# xsim/xelab/xvlog simulator logs (same "written to whatever cwd" behavior)
+xsim.log
+xsim.jou
+xsim_*.backup.log
+xsim_*.backup.jou
+xelab.log
+xelab.pb
+xvlog.log
+xvlog.pb
+xsim.dir/
+__pycache__/
+
+# Ad-hoc build/test-run logs and scratch batch files (not build outputs
+# meant to be tracked -- see fpga/point_sampler/README.md for the real
+# build/test entry points instead)
+build_axi_bd.log
+build_log.txt
+batch*.txt
+dashboard_server.out
+
+# Vivado's own generated project workspace (vendor IP, simulation models,
+# run checkpoints/reports) -- entirely regenerable from hw/*.tcl, not source.
+fpga/point_sampler/hw/vivado_proj/
+fpga/point_sampler/hw/vivado_proj_axi/
+fpga/point_sampler/hw/ip_repo/
