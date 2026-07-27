@@ -50,6 +50,10 @@ struct Vertex {
     bool operator==(const Vertex& other) const {
 		return position == other.position && normal == other.normal 
 			&& uv == other.uv && tangent == other.tangent && bitangent == other.bitangent;}
+
+    bool operator!=(const Vertex& other) const {
+        return !(*this == other);
+    }
 };
 
 struct Instance {
@@ -157,6 +161,16 @@ public:
         }
     } asInstanceData;
 
+    struct PendingInstance {
+        glm::vec3 v0{};
+        glm::vec3 v1{};
+        glm::vec3 v2{};
+
+        float u = 0, v = 0;
+        Transform partial{};
+
+    };
+
     struct KeyFrames {
         // keyframeable properties
         FS_KeyframeMap_t<Transform> transforms; // FS_KEYFRAME_POS_ROT_SCALE
@@ -191,6 +205,7 @@ public:
         const uint32_t frame
     );
 
+    std::vector<glm::vec3> queryFpgaBatch(const std::vector<PendingInstance>& pending);
     void bind(VkCommandBuffer commandBuffer);
     void draw(VkCommandBuffer commandBuffer);
 
@@ -221,7 +236,7 @@ private:
 	void createIndexBuffer(const std::vector<uint32_t>& indices);
     void createInstanceBuffer(uint32_t size);
     void addRndInstance(	
-        std::vector<Instance>& instanceMatrices,
+        std::vector<PendingInstance>& pending,
         Transform instanceTransform, 
         const AsInstanceData& keyframe, 
     	const glm::mat4& basis,

@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: GPL-2.0
+// Device-tree overlay for festi's barycentric point-sampler accelerator
+// (rtl/barycentric_axi.sv), loaded via xmutil/dfx-mgr as an XRT_FLAT app.
+//
+// Loads the full PL bitstream, then exposes the AXI4-Lite peripheral as a
+// plain /dev/uioN device at the address Vivado's block-design address
+// editor assigned it (0xA0000000, 4KB -- see hw/build_axi_bd.tcl's
+// "Assigned address segments" output) -- no XRT/zocl involved, since this
+// is a raw memory-mapped register block, not a Vitis/OpenCL kernel.
+
+/dts-v1/;
+/plugin/;
+
+&fpga_full {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	firmware-name = "point_sampler.bit.bin";
+};
+
+&amba {
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	barycentric_axi_0: barycentric_axi@a0000000 {
+		compatible = "generic-uio";
+		reg = <0x0 0xa0000000 0x0 0x1000>;
+		status = "okay";
+	};
+};

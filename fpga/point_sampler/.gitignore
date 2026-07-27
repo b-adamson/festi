@@ -1,0 +1,11 @@
+xsim.dir/
+*.log
+*.jou
+*.pb
+*.wdb
+vectors/*.txt
+
+# hw/overlay/ build outputs (bitstream + compiled device-tree overlay) --
+# generated from point_sampler.bif/.dtsi via bootgen/dtc, not source.
+hw/overlay/*.bit.bin
+hw/overlay/*.dtbo

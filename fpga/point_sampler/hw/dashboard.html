@@ -1,0 +1,229 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>barycentric.sv -- live FPGA dashboard</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; background: #10131a; color: #e7e9ee; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: #8a90a2; font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 24px; align-items: start; }
+  fieldset { border: 1px solid #2a2f3d; border-radius: 8px; padding: 12px 14px; margin: 0 0 14px; }
+  legend { color: #8a90a2; font-size: 12px; padding: 0 6px; }
+  .row { display: flex; gap: 8px; margin-bottom: 6px; }
+  .row label { width: 28px; color: #8a90a2; font-size: 13px; align-self: center; }
+  input[type=number] {
+    width: 100%; background: #1a1e29; border: 1px solid #2a2f3d; border-radius: 6px;
+    color: #e7e9ee; padding: 6px 8px; font-size: 13px;
+  }
+  button {
+    background: #4c7cf0; color: white; border: none; border-radius: 6px;
+    padding: 10px 16px; font-size: 14px; cursor: pointer; font-weight: 600;
+  }
+  button:disabled { background: #2a2f3d; color: #8a90a2; cursor: default; }
+  .status { font-size: 13px; color: #8a90a2; margin-top: 10px; min-height: 18px; }
+  .status.err { color: #f0704c; }
+  .status.ok { color: #4cd97b; }
+  canvas { background: #1a1e29; border: 1px solid #2a2f3d; border-radius: 8px; }
+  table { border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+  td, th { padding: 4px 12px; text-align: right; border-bottom: 1px solid #2a2f3d; }
+  th { color: #8a90a2; font-weight: 500; text-align: right; }
+  td.label { text-align: left; color: #8a90a2; }
+  .pass { color: #4cd97b; font-weight: 600; }
+  .fail { color: #f0704c; font-weight: 600; }
+  .autorow { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: #8a90a2; }
+</style>
+</head>
+<body>
+
+<h1>barycentric.sv &mdash; live FPGA dashboard</h1>
+<div class="sub">Kria K26 (xck26), driven live over JTAG via VIO. Edit a triangle + (u,v) below and query the actual silicon.</div>
+
+<div class="grid">
+  <div>
+    <fieldset>
+      <legend>v0</legend>
+      <div class="row"><label>x</label><input type="number" id="v0x" value="0" step="0.5"></div>
+      <div class="row"><label>y</label><input type="number" id="v0y" value="0" step="0.5"></div>
+      <div class="row"><label>z</label><input type="number" id="v0z" value="0" step="0.5"></div>
+    </fieldset>
+    <fieldset>
+      <legend>v1</legend>
+      <div class="row"><label>x</label><input type="number" id="v1x" value="10" step="0.5"></div>
+      <div class="row"><label>y</label><input type="number" id="v1y" value="0" step="0.5"></div>
+      <div class="row"><label>z</label><input type="number" id="v1z" value="0" step="0.5"></div>
+    </fieldset>
+    <fieldset>
+      <legend>v2</legend>
+      <div class="row"><label>x</label><input type="number" id="v2x" value="0" step="0.5"></div>
+      <div class="row"><label>y</label><input type="number" id="v2y" value="10" step="0.5"></div>
+      <div class="row"><label>z</label><input type="number" id="v2z" value="0" step="0.5"></div>
+    </fieldset>
+    <fieldset>
+      <legend>sample</legend>
+      <div class="row"><label>u</label><input type="number" id="u" value="0.3" step="0.05"></div>
+      <div class="row"><label>v</label><input type="number" id="v" value="0.3" step="0.05"></div>
+    </fieldset>
+
+    <button id="queryBtn" onclick="query()">Query FPGA</button>
+    <div class="autorow">
+      <input type="checkbox" id="autoq">
+      <label for="autoq">auto-query every</label>
+      <input type="number" id="autoSec" value="20" min="5" step="5" style="width:50px">
+      <span>s</span>
+    </div>
+    <div class="status" id="status"></div>
+
+    <table>
+      <tr><th></th><th>expected (JS)</th><th>hardware (FPGA)</th></tr>
+      <tr><td class="label">x</td><td id="ex">-</td><td id="hx">-</td></tr>
+      <tr><td class="label">y</td><td id="ey">-</td><td id="hy">-</td></tr>
+      <tr><td class="label">z</td><td id="ez">-</td><td id="hz">-</td></tr>
+      <tr><td class="label">valid</td><td></td><td id="hvalid">-</td></tr>
+      <tr><td class="label">match</td><td></td><td id="match">-</td></tr>
+    </table>
+  </div>
+
+  <div>
+    <canvas id="plot" width="560" height="560"></canvas>
+  </div>
+</div>
+
+<script>
+let autoTimer = null;
+
+function getInputs() {
+  const g = id => parseFloat(document.getElementById(id).value);
+  return {
+    v0: [g('v0x'), g('v0y'), g('v0z')],
+    v1: [g('v1x'), g('v1y'), g('v1z')],
+    v2: [g('v2x'), g('v2y'), g('v2z')],
+    u: g('u'), v: g('v'),
+  };
+}
+
+function expected(p) {
+  const w = 1 - p.u - p.v;
+  const out = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    out[i] = w * p.v0[i] + p.u * p.v1[i] + p.v * p.v2[i];
+  }
+  return out;
+}
+
+function drawPlot(p, exp, hw) {
+  const c = document.getElementById('plot');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  const pts = [p.v0, p.v1, p.v2];
+  let minX = Math.min(...pts.map(q => q[0]), exp[0], hw ? hw[0] : exp[0]) - 2;
+  let maxX = Math.max(...pts.map(q => q[0]), exp[0], hw ? hw[0] : exp[0]) + 2;
+  let minY = Math.min(...pts.map(q => q[1]), exp[1], hw ? hw[1] : exp[1]) - 2;
+  let maxY = Math.max(...pts.map(q => q[1]), exp[1], hw ? hw[1] : exp[1]) + 2;
+  const sx = v => 40 + (v - minX) / (maxX - minX) * (c.width - 80);
+  const sy = v => c.height - 40 - (v - minY) / (maxY - minY) * (c.height - 80);
+
+  ctx.strokeStyle = '#4c7cf0';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(sx(p.v0[0]), sy(p.v0[1]));
+  ctx.lineTo(sx(p.v1[0]), sy(p.v1[1]));
+  ctx.lineTo(sx(p.v2[0]), sy(p.v2[1]));
+  ctx.closePath();
+  ctx.stroke();
+
+  ctx.fillStyle = '#8a90a2';
+  ['v0', 'v1', 'v2'].forEach((label, i) => {
+    ctx.beginPath();
+    ctx.arc(sx(pts[i][0]), sy(pts[i][1]), 4, 0, 7);
+    ctx.fill();
+    ctx.fillText(label, sx(pts[i][0]) + 8, sy(pts[i][1]) - 8);
+  });
+
+  // expected (JS-computed) point: hollow ring
+  ctx.strokeStyle = '#4cd97b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(sx(exp[0]), sy(exp[1]), 8, 0, 7);
+  ctx.stroke();
+  ctx.fillStyle = '#4cd97b';
+  ctx.fillText('expected', sx(exp[0]) + 12, sy(exp[1]));
+
+  // hardware-measured point: solid dot (drawn on top, slightly offset if identical)
+  if (hw) {
+    ctx.fillStyle = '#f0c94c';
+    ctx.beginPath();
+    ctx.arc(sx(hw[0]), sy(hw[1]), 4, 0, 7);
+    ctx.fill();
+    ctx.fillText('FPGA', sx(hw[0]) + 12, sy(hw[1]) + 14);
+  }
+}
+
+async function query() {
+  const btn = document.getElementById('queryBtn');
+  const status = document.getElementById('status');
+  const p = getInputs();
+  const exp = expected(p);
+
+  document.getElementById('ex').textContent = exp[0].toFixed(3);
+  document.getElementById('ey').textContent = exp[1].toFixed(3);
+  document.getElementById('ez').textContent = exp[2].toFixed(3);
+  drawPlot(p, exp, null);
+
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = 'Querying FPGA over JTAG... (this takes ~15-30s, Vivado batch startup dominates)';
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch('/api/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(p),
+    });
+    const data = await res.json();
+    const dt = ((performance.now() - t0) / 1000).toFixed(1);
+
+    if (data.error) {
+      status.className = 'status err';
+      status.textContent = 'Error: ' + data.error;
+      return;
+    }
+
+    document.getElementById('hx').textContent = data.outx.toFixed(3);
+    document.getElementById('hy').textContent = data.outy.toFixed(3);
+    document.getElementById('hz').textContent = data.outz.toFixed(3);
+    document.getElementById('hvalid').textContent = data.valid;
+
+    const err = Math.abs(data.outx - exp[0]) + Math.abs(data.outy - exp[1]) + Math.abs(data.outz - exp[2]);
+    const matchEl = document.getElementById('match');
+    if (err < 0.01) {
+      matchEl.textContent = 'PASS';
+      matchEl.className = 'pass';
+    } else {
+      matchEl.textContent = 'FAIL (err=' + err.toFixed(4) + ')';
+      matchEl.className = 'fail';
+    }
+
+    drawPlot(p, exp, [data.outx, data.outy, data.outz]);
+    status.className = 'status ok';
+    status.textContent = 'Done in ' + dt + 's';
+  } catch (e) {
+    status.className = 'status err';
+    status.textContent = 'Request failed: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('autoq').addEventListener('change', (e) => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (e.target.checked) {
+    const sec = parseFloat(document.getElementById('autoSec').value) || 20;
+    autoTimer = setInterval(query, sec * 1000);
+  }
+});
+</script>
+</body>
+</html>

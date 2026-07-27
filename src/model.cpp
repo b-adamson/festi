@@ -13,6 +13,7 @@
 
 // std
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 #include <map>
@@ -21,6 +22,9 @@
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
+#include <sstream>
+#include <windows.h>
+#include <winhttp.h>
 
 template <>
 struct std::hash<festi::Vertex> {
@@ -452,6 +456,7 @@ std::vector<VkVertexInputBindingDescription> Vertex::getBindingDescriptions() {
 
 std::vector<Instance> FestiModel::getTransformsToPointsOnSurface(const AsInstanceData& keyframe, Transform& childTransform) {
 	std::vector<Instance> instanceMatrices;
+	std::vector<PendingInstance> pending;
 
 	auto genRnd = std::mt19937(keyframe.random.seed);
 	auto genBldng = std::mt19937(keyframe.building.seed);
@@ -495,7 +500,7 @@ std::vector<Instance> FestiModel::getTransformsToPointsOnSurface(const AsInstanc
 			if (instCount != 0) {
 				// Add random instances
 				for (size_t j = 0; j < instCount; ++j) {
-					addRndInstance(instanceMatrices, baseTransform, keyframe, parentModelMatrix, uvPairs, v0, v1, v2, genRnd);
+					addRndInstance(pending, baseTransform, keyframe, parentModelMatrix, uvPairs, v0, v1, v2, genRnd);
 				}
 			}
 			if (keyframe.building.columnDensity != 0) {
@@ -504,11 +509,132 @@ std::vector<Instance> FestiModel::getTransformsToPointsOnSurface(const AsInstanc
 			}
 		}
 	}
+	// Set FESTI_FORCE_CPU_INSTANCING=1 to skip the FPGA round trip entirely
+	// and always use the CPU formula below -- useful when the board/bridge
+	// isn't available, or to A/B the two paths without rebuilding.
+	static const bool forceCpu = std::getenv("FESTI_FORCE_CPU_INSTANCING") != nullptr;
+
+	std::vector<glm::vec3> fpgaPoints;
+	bool useFpga = false;
+	if (!forceCpu && !pending.empty()) {
+		try {
+			fpgaPoints = queryFpgaBatch(pending);
+			useFpga = true;
+		} catch (const std::exception& e) {
+			std::cerr << "queryFpgaBatch failed, falling back to CPU: " << e.what() << '\n';
+		}
+	}
+
+	for (size_t i = 0; i < pending.size(); ++i) {
+		PendingInstance& p = pending[i];
+		glm::vec3 point = useFpga
+			? fpgaPoints[i]
+			: (1.f - p.u - p.v) * p.v0 + p.u * p.v1 + p.v * p.v2;
+		p.partial.translation += point;
+		glm::mat4 modelMat = p.partial.getModelMatrix();
+		glm::mat4 normalMat = p.partial.getNormalMatrix();
+		instanceMatrices.push_back({modelMat, normalMat});
+	}
     return instanceMatrices;
 }
 
+std::string vec3ToString(glm::vec3 v) {
+	return std::to_string(v.x) + " " + std::to_string(v.y) + " " + std::to_string(v.z);
+}
+
+
+std::vector<glm::vec3> FestiModel::queryFpgaBatch(const std::vector<PendingInstance>& pending) {
+	std::string text = "";
+	for (auto& p : pending) {
+		text += vec3ToString(p.v0) + " " + vec3ToString(p.v1) + " " + vec3ToString(p.v2) + " " + std::to_string(p.u) + " " + std::to_string(p.v) + "\n";
+	}
+
+	// -- WinHTTP boilerplate: open session -> connect -> open request -> send -> receive --
+	// WINHTTP_ACCESS_TYPE_NO_PROXY instead of _DEFAULT_PROXY -- the latter
+	// triggers a fresh Windows proxy-auto-detection (WPAD) probe on every
+	// single call, adding several more seconds on top of the hostname-
+	// resolution cost fixed above, for a connection that's pure loopback
+	// and never needs a proxy at all.
+	HINTERNET hSession = WinHttpOpen(
+		L"festi/1.0",
+		WINHTTP_ACCESS_TYPE_NO_PROXY,
+		WINHTTP_NO_PROXY_NAME,
+		WINHTTP_NO_PROXY_BYPASS,
+		0);
+	if (!hSession) throw std::runtime_error("queryFpgaBatch: WinHttpOpen failed");
+
+	WinHttpSetTimeouts(hSession, 10000, 10000, 30000, 180000);
+
+	HINTERNET hConnect = WinHttpConnect(hSession, L"127.0.0.1", 8765, 0);
+	if (!hConnect) {
+		WinHttpCloseHandle(hSession);
+		throw std::runtime_error("queryFpgaBatch: WinHttpConnect failed (is dashboard_server.py running?)");
+	}
+
+	HINTERNET hRequest = WinHttpOpenRequest(
+		hConnect,
+		L"POST",
+		L"/api/batch",
+		NULL,
+		WINHTTP_NO_REFERER,
+		WINHTTP_DEFAULT_ACCEPT_TYPES,
+		0);
+	if (!hRequest) {
+		WinHttpCloseHandle(hConnect);
+		WinHttpCloseHandle(hSession);
+		throw std::runtime_error("queryFpgaBatch: WinHttpOpenRequest failed");
+	}
+
+	BOOL sendOk = WinHttpSendRequest(
+		hRequest,
+		WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+		(LPVOID)text.data(), (DWORD)text.size(), (DWORD)text.size(),
+		0);
+
+	BOOL receiveOk = sendOk && WinHttpReceiveResponse(hRequest, NULL);
+
+	// -- read the response body, one chunk at a time until there's nothing left --
+	std::string response;
+	if (receiveOk) {
+		DWORD dwSize = 0;
+		do {
+			dwSize = 0;
+			if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
+			if (dwSize == 0) break;
+
+			std::vector<char> buffer(dwSize);
+			DWORD dwRead = 0;
+			if (!WinHttpReadData(hRequest, buffer.data(), dwSize, &dwRead)) break;
+			response.append(buffer.data(), dwRead);
+		} while (dwSize > 0);
+	}
+
+	WinHttpCloseHandle(hRequest);
+	WinHttpCloseHandle(hConnect);
+	WinHttpCloseHandle(hSession);
+
+	if (!sendOk || !receiveOk) {
+		throw std::runtime_error("queryFpgaBatch: HTTP request to FPGA bridge failed");
+	}
+
+	// -- parse the plaintext "x y z" per line response --
+	std::vector<glm::vec3> results;
+	std::istringstream iss(response);
+	float x, y, z;
+	while (iss >> x >> y >> z) {
+		results.push_back(glm::vec3(x, y, z));
+	}
+
+	if (results.size() != pending.size()) {
+		throw std::runtime_error(
+			"queryFpgaBatch: expected " + std::to_string(pending.size())
+			+ " results, got " + std::to_string(results.size()) + ". Response was: " + response);
+	}
+	return results;
+}
+
 void FestiModel::addRndInstance(
-	std::vector<Instance>& instanceMatrices,
+	std::vector<PendingInstance>& pending,
 	Transform instanceTransform, 
 	const AsInstanceData& keyframe, 
 	const glm::mat4& basis,
@@ -548,13 +674,14 @@ void FestiModel::addRndInstance(
 		smallest = pow(smallest, 1 / keyframe.random.solidity);
 	}
 
-	// Move to the random point
-	instanceTransform.translation += (1.0f - u - v) * v0 + u * v1 + v * v2;
+	// Move to the random point // replaced with FPGA implementation - uncomment to go purely CPU
+	// instanceTransform.translation += (1.0f - u - v) * v0 + u * v1 + v * v2;
 
 	// Create instance matrix
-	glm::mat4 modelMat = instanceTransform.getModelMatrix();
-	glm::mat4 normalMat = instanceTransform.getNormalMatrix();
-	instanceMatrices.push_back(Instance{modelMat, normalMat});
+	// glm::mat4 modelMat = instanceTransform.getModelMatrix();
+	// glm::mat4 normalMat = instanceTransform.getNormalMatrix();
+	PendingInstance pendingInstance{v0, v1, v2, u, v, instanceTransform};
+	pending.push_back(pendingInstance);
 }
 
 void FestiModel::addBuildingInstances(

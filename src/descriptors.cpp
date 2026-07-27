@@ -7,7 +7,7 @@
 
 namespace festi {
 
-/*************** Descriptor Set Layout Builder *********************/
+// Descriptor Set Layout Builder
 
 FestiDescriptorSetLayout::Builder &FestiDescriptorSetLayout::Builder::addBinding(
     uint32_t binding,
@@ -28,7 +28,7 @@ FestiDescriptorSetLayout FestiDescriptorSetLayout::Builder::build() const {
  	 return FestiDescriptorSetLayout(festiDevice, bindings);
 }
 
-// *************** Descriptor Set Layout *********************
+// Descriptor Set Layout
 
 FestiDescriptorSetLayout::FestiDescriptorSetLayout(
     FestiDevice &festiDevice, std::unordered_map<uint32_t, VkDescriptorSetLayoutBinding> bindings)
@@ -56,7 +56,7 @@ FestiDescriptorSetLayout::~FestiDescriptorSetLayout() {
   	vkDestroyDescriptorSetLayout(festiDevice.device(), descriptorSetLayout, nullptr);
 }
 
-// *************** Descriptor Pool Builder *********************
+// Descriptor Pool Builder
 
 FestiDescriptorPool::Builder &FestiDescriptorPool::Builder::addPoolSize(
     VkDescriptorType descriptorType, uint32_t count) {
