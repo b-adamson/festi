@@ -17,8 +17,10 @@ attributes across a triangle -- so the core (`rtl/barycentric.sv`) doubles
 as a first building block toward a from-scratch rasterizer.
 
 Two hardware paths exist: a JTAG/VIO debug path for bring-up (§2), and an
-AXI4-Lite + embedded-Linux path (§3) that's how the engine actually talks
-to the board day-to-day, via `hw/uio_bridge.py` and `hw/dashboard_server.py`.
+AXI4-Lite + embedded-Linux path (§3) that the engine uses to talk to the
+board when the FPGA path is switched on, via `hw/uio_bridge.py` and
+`hw/dashboard_server.py`. That path is opt-in -- the engine defaults to
+computing the points on the CPU (see the end of §3).
 
 ## Layout
 
@@ -170,6 +172,12 @@ transport if ethernet isn't available, but is ~10-20x slower (a 115200-baud
 debug console, not a data link) -- expect single-digit ms per instance
 over ethernet vs tens of ms over serial.
 
-Set `FESTI_FORCE_CPU_INSTANCING=1` before launching festi.exe to skip the
-FPGA path entirely and always use the CPU formula, regardless of whether
-the board/bridge are reachable.
+By default the engine uses the CPU formula and never contacts the board.
+Set `FESTI_FORCE_CPU_INSTANCING=0` before launching festi.exe to enable the
+FPGA round trip; leaving it unset -- or setting it to anything other than
+`0`, including `1` -- keeps the CPU path.
+
+Even with the FPGA path enabled, a failed round trip (board down, bridge
+not running, `dashboard_server.py` not started) falls back to the CPU
+formula for that batch and logs the reason to stderr, so a broken link
+shows up as a log line rather than a crash.
