@@ -140,7 +140,7 @@ void FestiRenderer::beginShadowPass(VkCommandBuffer commandBuffer) {
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = shadowRenderPass;
-    renderPassInfo.framebuffer = shadowFramebuffers[currentImageIndex];
+    renderPassInfo.framebuffer = shadowFramebuffers[currentFrameIndex];
 
     renderPassInfo.renderArea.offset = {0, 0};
     renderPassInfo.renderArea.extent = VkExtent2D{2048, 2048};
@@ -184,33 +184,31 @@ void FestiRenderer::endSwapChainRenderPass(VkCommandBuffer commandBuffer) {
 }
 
 void FestiRenderer::transitionShadowMapToReadOnly(VkCommandBuffer cmdBuffer) {
-	for (size_t i = 0; i < getImageCount(); i++) {
-		festiDevice.transitionImageLayout(
-			shadowImages[i],
-			cmdBuffer,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-			VK_ACCESS_SHADER_READ_BIT ,
-			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-		);
-	}
+	// Only the shadow map this frame actually rendered into needs transitioning --
+	// it is the only one the main pass will sample.
+	festiDevice.transitionImageLayout(
+		shadowImages[currentFrameIndex],
+		cmdBuffer,
+		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+		VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+		VK_ACCESS_SHADER_READ_BIT ,
+		VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+		VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+	);
 }
 
 void FestiRenderer::transitionShadowMapToAttachment(VkCommandBuffer cmdBuffer) {
-	for (size_t i = 0; i < getImageCount(); i++) {
-		festiDevice.transitionImageLayout(
-			shadowImages[i],
-			cmdBuffer,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-			VK_ACCESS_SHADER_READ_BIT,
-			VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT ,
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-		);
-	}
+	festiDevice.transitionImageLayout(
+		shadowImages[currentFrameIndex],
+		cmdBuffer,
+		VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		VK_ACCESS_SHADER_READ_BIT,
+		VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT ,
+		VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+	);
 }
 
 void FestiRenderer::createShadowItems() {
@@ -263,7 +261,7 @@ void FestiRenderer::createShadowRenderPass() {
 }
 
 void FestiRenderer::createShadowFrameBuffers() {
-    shadowFramebuffers.resize(getImageCount());
+    shadowFramebuffers.resize(FS_MAX_FRAMES_IN_FLIGHT);
 
     for (size_t i = 0; i < shadowFramebuffers.size(); i++) {
 		std::array<VkImageView, 1> attachments = {shadowImageViews[i]};
@@ -285,9 +283,11 @@ void FestiRenderer::createShadowFrameBuffers() {
 void FestiRenderer::createShadowResources() {
 	VkFormat shadowFormat = festiSwapChain->findDepthFormat();  // Typically, depth format for shadows
 
-    shadowImages.resize(getImageCount());
-    shadowImageMemorys.resize(getImageCount());
-    shadowImageViews.resize(getImageCount());
+    // Shadow maps are per frame-in-flight, not per swapchain image: they are written
+    // and sampled entirely within one frame and never presented.
+    shadowImages.resize(FS_MAX_FRAMES_IN_FLIGHT);
+    shadowImageMemorys.resize(FS_MAX_FRAMES_IN_FLIGHT);
+    shadowImageViews.resize(FS_MAX_FRAMES_IN_FLIGHT);
 
     for (size_t i = 0; i < shadowImages.size(); i++) {
         VkImageCreateInfo imageInfo{};
