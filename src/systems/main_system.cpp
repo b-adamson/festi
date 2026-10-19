@@ -172,7 +172,7 @@ void MainSystem::renderGameObjects(FrameInfo& frameInfo) {
         nullptr);
 
 	for (size_t i = 0; i < frameInfo.gameObjects.size(); i++) {
-		auto& obj = frameInfo.gameObjects[i];
+		auto& obj = frameInfo.gameObjects.at(i);
 		if (!obj->visibility) continue;
 
 		MainPushConstants push{};
@@ -205,8 +205,7 @@ void MainSystem::createShadowMap(FrameInfo& frameInfo) {
 		sizeof(ShadowPushConstants),
 		&push);
 
-	for (size_t i = 0; i < frameInfo.gameObjects.size(); i++) {
-		auto& obj = frameInfo.gameObjects[i];
+	for (auto& [id, obj] : frameInfo.gameObjects) {
 		if (!obj->visibility) continue;
 
 		obj->bind(frameInfo.commandBuffer);
